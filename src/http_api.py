@@ -12,6 +12,11 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+INSTALLMENT_RE = re.compile(r"^/api/records/(\d+)/installments$")
+RECEIPT_LIST_RE = re.compile(r"^/api/records/(\d+)/receipts$")
+PLAN_CHANGE_LIST_RE = re.compile(r"^/api/records/(\d+)/plan-changes$")
+PLAN_CHANGE_RE = re.compile(r"^/api/plan-changes/(\d+)/(confirm|reject)$")
+DIFFERENCE_RE = re.compile(r"^/api/differences/(\d+)/resolve$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -76,6 +81,26 @@ def make_handler(service: Any, static_dir: Path):
                     records = service.list_records(self._actor(), state=query.get("state", [None])[0], limit=int(query.get("limit", ["100"])[0]))
                     self._send(200, {"items": records})
                     return
+                if parsed.path == "/api/differences":
+                    query = parse_qs(parsed.query)
+                    differences = service.list_differences(
+                        self._actor(), status=query.get("status", [None])[0],
+                        limit=int(query.get("limit", ["100"])[0]),
+                    )
+                    self._send(200, {"items": differences})
+                    return
+                match = INSTALLMENT_RE.match(parsed.path)
+                if match:
+                    self._send(200, {"items": service.installments(self._actor(), int(match.group(1)))})
+                    return
+                match = RECEIPT_LIST_RE.match(parsed.path)
+                if match:
+                    self._send(200, {"items": service.list_receipts(self._actor(), int(match.group(1)))})
+                    return
+                match = PLAN_CHANGE_LIST_RE.match(parsed.path)
+                if match:
+                    self._send(200, {"items": service.plan_changes(self._actor(), int(match.group(1)))})
+                    return
                 match = RECORD_RE.match(parsed.path)
                 if match:
                     self._send(200, service.get_record(self._actor(), int(match.group(1))))
@@ -98,6 +123,33 @@ def make_handler(service: Any, static_dir: Path):
                 if parsed.path == "/api/records":
                     record = service.create(self._actor(), body.get("reference", ""), body.get("data", {}))
                     self._send(201, record)
+                    return
+                if parsed.path == "/api/reconcile":
+                    scope = body.get("record_id")
+                    record_id = int(scope) if isinstance(scope, int) else None
+                    self._send(200, service.run_reconciliation(self._actor(), record_id=record_id))
+                    return
+                match = RECEIPT_LIST_RE.match(parsed.path)
+                if match:
+                    result = service.ingest_receipt(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(201, result)
+                    return
+                match = PLAN_CHANGE_LIST_RE.match(parsed.path)
+                if match:
+                    change = service.submit_plan_change(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(201, change)
+                    return
+                match = PLAN_CHANGE_RE.match(parsed.path)
+                if match:
+                    change = service.review_plan_change(
+                        self._actor(), int(match.group(1)), match.group(2), body.get("data", {})
+                    )
+                    self._send(200, change)
+                    return
+                match = DIFFERENCE_RE.match(parsed.path)
+                if match:
+                    result = service.resolve_difference(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(200, result)
                     return
                 match = ACTION_RE.match(parsed.path)
                 if match:

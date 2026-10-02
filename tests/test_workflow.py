@@ -25,5 +25,16 @@ class WorkflowTest(unittest.TestCase):
             record = self.service.act(Actor("operator", role), record["id"], record["version"], action, data)
             self.assertEqual(record["state"], expected_state)
         timeline = self.service.timeline(Actor("creator", "intake_officer"), record["id"])
-        self.assertEqual(len(timeline), len(FLOW) + 1)
+        # created + 4 个动作；activate 同事务额外审计 plan_created
+        self.assertEqual(len(timeline), len(FLOW) + 2)
         self.assertEqual(timeline[-1]["action"], FLOW[-1][0])
+
+    def test_activate_creates_single_active_plan_and_installments(self):
+        record = self.service.create(Actor("creator", "intake_officer"), "MORT-27010", CREATE_DATA)
+        for action, role, data, expected_state in FLOW[:3]:
+            record = self.service.act(Actor("operator", role), record["id"], record["version"], action, data)
+        self.assertEqual(record["state"], "active")
+        terms = self.service.installments(Actor("operator", "servicer"), record["id"])
+        self.assertEqual(len(terms), record["payload"]["approved_months"])
+        self.assertTrue(all(term["status"] == "active" for term in terms))
+        self.assertEqual([term["period_no"] for term in terms], list(range(1, len(terms) + 1)))

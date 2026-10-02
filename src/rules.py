@@ -7,6 +7,9 @@ from .domain import Actor, Conflict, ValidationError, boolean, choice, integer, 
 INITIAL_STATE = "submitted"
 CREATE_ROLES = {'intake_officer'}
 ACTION_ROLES = {'assess': {'intake_officer'}, 'approve': {'underwriter'}, 'activate': {'servicer'}, 'cure': {'servicer'}, 'default': {'servicer'}}
+PLAN_CHANGE_SUBMIT_ROLES = {'servicer'}
+PLAN_CHANGE_REVIEW_ROLES = {'reviewer'}
+RECON_ROLES = {'servicer'}
 TRANSITIONS = {'assess': {'submitted': 'assessed'}, 'approve': {'assessed': 'approved'}, 'activate': {'approved': 'active'}, 'cure': {'active': 'cured'}, 'default': {'active': 'defaulted'}}
 
 
@@ -17,6 +20,9 @@ class DomainRules:
         all_roles = set(CREATE_ROLES)
         for roles in ACTION_ROLES.values():
             all_roles.update(roles)
+        all_roles.update(PLAN_CHANGE_SUBMIT_ROLES)
+        all_roles.update(PLAN_CHANGE_REVIEW_ROLES)
+        all_roles.update(RECON_ROLES)
         return role == "admin" or role in all_roles
 
     def role_can_create(self, role: str) -> bool:
@@ -24,6 +30,21 @@ class DomainRules:
 
     def role_can_action(self, role: str, action: str) -> bool:
         return role == "admin" or role in ACTION_ROLES.get(action, set())
+
+    def role_can_submit_plan_change(self, role: str) -> bool:
+        return role == "admin" or role in PLAN_CHANGE_SUBMIT_ROLES
+
+    def role_can_review_plan_change(self, role: str) -> bool:
+        return role == "admin" or role in PLAN_CHANGE_REVIEW_ROLES
+
+    def role_can_reconcile(self, role: str) -> bool:
+        return role == "admin" or role in RECON_ROLES
+
+    def validate_plan_change(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        payment = number(data, "payment_amount", 0)
+        months = integer(data, "months", 1, 24)
+        reason = text(data, "reason")
+        return {"payment_amount": round(payment, 2), "months": months, "reason": reason}
 
     def validate_create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         p = dict(payload)
@@ -58,8 +79,11 @@ class DomainRules:
         return p
 
     def check_create_conflicts(self, payload: Dict[str, Any], existing: Iterable[Dict[str, Any]]) -> None:
+        borrower_id = payload.get("borrower_id")
+        if not borrower_id:
+            return
         for item in existing:
-            if item["state"] in {"active", "approved", "assessed"} and item["payload"].get("borrower_id") == payload.get("borrower_id"):
+            if item["state"] in {"active", "approved", "assessed"} and item["payload"].get("borrower_id") == borrower_id:
                 raise Conflict("该借款人已有处理中纾困申请")
 
     def require_transition(self, record: Dict[str, Any], action: str) -> str:
