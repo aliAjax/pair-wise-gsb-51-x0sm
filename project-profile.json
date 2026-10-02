@@ -1,0 +1,11 @@
+{
+  "projectId": "pair-wise-gsb-51",
+  "projectName": "pair-wise-gsb-51",
+  "category": "地狱 Python 模块化项目",
+  "businessDomain": "住房金融",
+  "projectForm": "完整项目",
+  "codeScope": "backend, frontend",
+  "languages": ["Python", "HTML", "CSS", "JavaScript"],
+  "summary": "住房贷款纾困申请与履约跟踪服务，覆盖偿付能力、方案阈值和履约状态。",
+  "containerized": false
+}
