@@ -6,6 +6,9 @@ from .domain import Actor, Conflict, ValidationError, boolean, choice, integer, 
 
 INITIAL_STATE = "submitted"
 CREATE_ROLES = {'intake_officer'}
+# reviewer：纾困方案变更的复核人（经办与复核必须双人）
+REVIEWER_ROLE = "reviewer"
+PLAN_CHANGE_ROLES = {'servicer', REVIEWER_ROLE}
 ACTION_ROLES = {'assess': {'intake_officer'}, 'approve': {'underwriter'}, 'activate': {'servicer'}, 'cure': {'servicer'}, 'default': {'servicer'}}
 TRANSITIONS = {'assess': {'submitted': 'assessed'}, 'approve': {'assessed': 'approved'}, 'activate': {'approved': 'active'}, 'cure': {'active': 'cured'}, 'default': {'active': 'defaulted'}}
 
@@ -17,6 +20,7 @@ class DomainRules:
         all_roles = set(CREATE_ROLES)
         for roles in ACTION_ROLES.values():
             all_roles.update(roles)
+        all_roles.update(PLAN_CHANGE_ROLES)
         return role == "admin" or role in all_roles
 
     def role_can_create(self, role: str) -> bool:
@@ -102,3 +106,32 @@ class DomainRules:
             summary = "纾困方案违约"
         p.update(changes)
         return new_state, p, summary or ("已执行%s" % action)
+
+    @staticmethod
+    def plan_terms(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """从已批准记录的字段取出方案要素（每期应收只对应一个有效方案）。"""
+        return {
+            "program_type": str(payload.get("approved_program") or payload.get("program_type")),
+            "periods": int(payload["approved_months"]),
+            "installment_amount": round(float(payload["approved_payment"]), 2),
+        }
+
+    @staticmethod
+    def validate_plan_change(data: Dict[str, Any]) -> Dict[str, Any]:
+        """经办提交的方案变更要素；只改期数/月供，旧计划在确认前继续收款。"""
+        from .recon import optional_iso_date
+
+        periods = integer(data, "periods", 1, 24)
+        installment_amount = number(data, "installment_amount", 0)
+        reason = text(data, "reason")
+        program_type = str(data.get("program_type") or "restructure")
+        if program_type not in {"deferral", "reduction", "restructure"}:
+            raise ValidationError("program_type只能是deferral/reduction/restructure")
+        first_due_date = optional_iso_date(data, "first_due_date")
+        return {
+            "periods": periods,
+            "installment_amount": round(installment_amount, 2),
+            "reason": reason,
+            "program_type": program_type,
+            "first_due_date": first_due_date,
+        }

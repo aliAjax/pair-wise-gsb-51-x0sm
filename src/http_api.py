@@ -12,6 +12,11 @@ from .domain import Actor, DomainError, PermissionDenied, ValidationError
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+PLAN_CHANGES_RE = re.compile(r"^/api/records/(\d+)/plan-changes$")
+PLAN_CHANGE_REVIEW_RE = re.compile(r"^/api/plan-changes/(\d+)/review$")
+RECEIPTS_RE = re.compile(r"^/api/records/(\d+)/receipts$")
+RECON_VIEW_RE = re.compile(r"^/api/records/(\d+)/reconciliation$")
+DISCREPANCY_RE = re.compile(r"^/api/discrepancies/(\d+)$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -87,6 +92,23 @@ def make_handler(service: Any, static_dir: Path):
                 if parsed.path == "/api/stats":
                     self._send(200, service.stats(self._actor()))
                     return
+                if parsed.path == "/api/discrepancies":
+                    query = parse_qs(parsed.query)
+                    record_id = query.get("record_id", [None])[0]
+                    self._send(200, {"items": service.list_discrepancies(
+                        self._actor(),
+                        status=query.get("status", [None])[0],
+                        record_id=int(record_id) if record_id else None,
+                    )})
+                    return
+                match = RECON_VIEW_RE.match(parsed.path)
+                if match:
+                    self._send(200, service.recon_view(self._actor(), int(match.group(1))))
+                    return
+                match = PLAN_CHANGES_RE.match(parsed.path)
+                if match:
+                    self._send(200, {"items": service.list_plan_changes(self._actor(), int(match.group(1)))})
+                    return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
                 self._handle_error(exc)
@@ -107,6 +129,38 @@ def make_handler(service: Any, static_dir: Path):
                     record = service.act(self._actor(), int(match.group(1)), version, match.group(2), body.get("data", {}))
                     self._send(200, record)
                     return
+                if parsed.path == "/api/reconcile":
+                    self._send(200, service.reconcile(self._actor()))
+                    return
+                match = PLAN_CHANGES_RE.match(parsed.path)
+                if match:
+                    record = service.submit_plan_change(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(201, record)
+                    return
+                match = PLAN_CHANGE_REVIEW_RE.match(parsed.path)
+                if match:
+                    approved = body.get("approved")
+                    if not isinstance(approved, bool):
+                        raise ValidationError("approved必须是布尔值")
+                    result = service.review_plan_change(self._actor(), int(match.group(1)), approved, body.get("data", {}))
+                    self._send(200, result)
+                    return
+                match = RECEIPTS_RE.match(parsed.path)
+                if match:
+                    result = service.intake_receipt(self._actor(), int(match.group(1)), body.get("data", {}))
+                    self._send(201, result)
+                    return
+                match = DISCREPANCY_RE.match(parsed.path)
+                if match:
+                    discrepancy_id = int(match.group(1))
+                    action = body.get("action", "recheck")
+                    if action == "recheck":
+                        self._send(200, service.recheck_discrepancy(self._actor(), discrepancy_id))
+                        return
+                    if action == "ignore":
+                        self._send(200, service.ignore_discrepancy(self._actor(), discrepancy_id, body.get("data", {})))
+                        return
+                    raise ValidationError("action只能是recheck或ignore")
                 self._send(404, {"error": "not_found", "message": "路径不存在"})
             except Exception as exc:
                 self._handle_error(exc)
